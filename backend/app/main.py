@@ -27,9 +27,14 @@ import app.models  # noqa: F401, E402  (register models on Base)
 
 Base.metadata.create_all(bind=engine)
 
+# Build the RAG knowledge base. Done at import (not only in lifespan) because
+# some serverless ASGI hosts don't run startup lifespan events per cold start.
+index_policies()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    index_policies()  # build the RAG knowledge base on startup
+    index_policies()
     yield
 
 
@@ -41,10 +46,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Auth is via Bearer tokens (not cookies), so a wildcard origin is safe: set
+# CORS_ORIGINS="*" in production to allow the Vercel frontend without hard-coding
+# its URL. With "*" we must disable credentials (browsers forbid the combo).
+_origins = settings.cors_origin_list
+_allow_all = "*" in _origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
+    allow_origins=["*"] if _allow_all else _origins,
+    allow_credentials=not _allow_all,
     allow_methods=["*"],
     allow_headers=["*"],
 )
