@@ -1,3 +1,7 @@
+# Production image deps for Koyeb (always-on, 512MB free tier).
+# Excludes heavy ML libs (torch/sentence-transformers/qdrant) — the app's
+# vector store degrades gracefully to a hashing embedder, so semantic ranking
+# still works. Gemini powers the AI features.
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
@@ -14,7 +18,4 @@ pypdf==5.1.0
 reportlab==4.2.5
 google-genai==1.9.0
 psycopg[binary]==3.2.3
-qdrant-client==1.12.1
-sentence-transformers==3.3.1
 httpx==0.28.1
-pytest==8.3.4
