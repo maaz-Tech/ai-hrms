@@ -3,8 +3,22 @@
 In a hackathon demo this stands in for an uploaded employee handbook. Each
 entry is indexed into the vector store on startup so the chatbot can ground
 answers and cite sources.
+
+Policy embeddings are precomputed once into ``policy_embeddings.json`` (see
+``build_policy_cache.py``). On startup we load that cache instead of calling the
+embedding API — important on serverless, where startup runs on every cold start
+and the embedding free-tier quota is small.
 """
+import json
+import logging
+from pathlib import Path
+
 from app.ai import vector_store
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+_CACHE_PATH = Path(__file__).with_name("policy_embeddings.json")
 
 POLICIES: list[dict] = [
     {
@@ -60,10 +74,39 @@ POLICIES: list[dict] = [
 ]
 
 
+def _payload(i: int) -> dict:
+    p = POLICIES[i]
+    return {"title": p["title"], "text": p["text"], "kind": "policy"}
+
+
+def _load_cache() -> list[list[float]] | None:
+    """Return cached policy vectors if present and valid for the active model."""
+    if not _CACHE_PATH.exists():
+        return None
+    try:
+        data = json.loads(_CACHE_PATH.read_text())
+    except Exception:
+        return None
+    if (
+        data.get("model") != settings.embedding_model_gemini
+        or len(data.get("vectors", [])) != len(POLICIES)
+    ):
+        return None  # stale cache (model changed / policies edited) → re-embed
+    return data["vectors"]
+
+
 def index_policies() -> None:
-    for i, p in enumerate(POLICIES):
-        vector_store.index_document(
-            point_id=1000 + i,
-            text=f"{p['title']}. {p['text']}",
-            payload={"title": p["title"], "text": p["text"], "kind": "policy"},
-        )
+    """Index the policy KB, using the precomputed embedding cache when valid."""
+    cached = _load_cache()
+    if cached is not None:
+        for i, vec in enumerate(cached):
+            vector_store.index_into_memory(1000 + i, vec, _payload(i))
+        logger.info("Loaded %d cached policy embeddings (no API calls).", len(cached))
+        return
+    # No valid cache → embed live (single batched call), then it still works.
+    logger.info("No policy embedding cache — embedding live.")
+    items = [
+        (1000 + i, f"{POLICIES[i]['title']}. {POLICIES[i]['text']}", _payload(i))
+        for i in range(len(POLICIES))
+    ]
+    vector_store.index_documents(items)

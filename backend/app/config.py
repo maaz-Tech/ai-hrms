@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.0-flash"
     qdrant_url: str = ""
     qdrant_api_key: str = ""
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model: str = "all-MiniLM-L6-v2"          # local sentence-transformers
+    embedding_model_gemini: str = "gemini-embedding-001"  # Gemini embeddings API
 
     @property
     def cors_origin_list(self) -> list[str]:

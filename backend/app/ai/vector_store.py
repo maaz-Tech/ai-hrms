@@ -42,11 +42,25 @@ def _get_encoder():
 
 
 def embed(text: str) -> list[float]:
-    """Return an embedding vector for *text* (model or hashing fallback)."""
+    """Return an embedding vector for *text*.
+
+    Preference order: Gemini embeddings API (semantic, lightweight — ideal for
+    serverless) → local sentence-transformers → deterministic hashing embedder.
+    """
+    text = text or ""
+    # 1. Gemini embeddings (no heavy local deps).
+    from app.ai import gemini_client  # local import avoids a circular import
+
+    if gemini_client.is_available():
+        vecs = gemini_client.embed([text])
+        if vecs:
+            return vecs[0]
+    # 2. Local model if installed.
     encoder = _get_encoder()
     if encoder is not None:
-        return encoder.encode(text or "").tolist()
-    return _hash_embed(text or "")
+        return encoder.encode(text).tolist()
+    # 3. Hashing fallback.
+    return _hash_embed(text)
 
 
 def _hash_embed(text: str, dim: int = _EMBED_DIM) -> list[float]:
@@ -59,7 +73,26 @@ def _hash_embed(text: str, dim: int = _EMBED_DIM) -> list[float]:
     return [v / norm for v in vec]
 
 
+def embed_many(texts: list[str]) -> list[list[float]]:
+    """Embed several texts in ONE call where possible.
+
+    This matters on serverless: the policy KB is re-indexed on every cold start,
+    so batching keeps it to a single embedding request instead of one-per-doc.
+    """
+    if not texts:
+        return []
+    from app.ai import gemini_client  # local import avoids a circular import
+
+    if gemini_client.is_available():
+        vecs = gemini_client.embed(texts)
+        if vecs and len(vecs) == len(texts):
+            return vecs
+    return [embed(t) for t in texts]
+
+
 def cosine(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b):  # guard against mixed embedding backends/dims
+        return 0.0
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a)) or 1.0
     nb = math.sqrt(sum(y * y for y in b)) or 1.0
@@ -97,6 +130,18 @@ _memory = _MemoryIndex()
 def index_document(point_id: int, text: str, payload: dict) -> None:
     """Index a resume / policy chunk for later semantic search."""
     _memory.upsert(point_id, embed(text), payload)
+
+
+def index_documents(items: list[tuple[int, str, dict]]) -> None:
+    """Batch-index documents with a single embedding call (see embed_many)."""
+    vectors = embed_many([text for _, text, _ in items])
+    for (point_id, _, payload), vec in zip(items, vectors):
+        _memory.upsert(point_id, vec, payload)
+
+
+def index_into_memory(point_id: int, vector: list[float], payload: dict) -> None:
+    """Index a document from a precomputed vector (no embedding call)."""
+    _memory.upsert(point_id, vector, payload)
 
 
 def search(query: str, limit: int = 5) -> list[dict]:

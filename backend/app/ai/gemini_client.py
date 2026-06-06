@@ -79,3 +79,23 @@ async def generate_text(prompt: str, temperature: float = 0.4) -> str | None:
     except Exception as exc:  # pragma: no cover
         logger.warning("Gemini generate_text failed: %s", exc)
         return None
+
+
+def embed(texts: list[str]) -> list[list[float]] | None:
+    """Embed one or more texts with Gemini's embedding model (sync, batched).
+
+    Returns a list of vectors (one per input), or None if Gemini is unavailable
+    or the call fails so callers can fall back to a local embedder.
+    """
+    client = _get_client()
+    if client is None or not texts:
+        return None
+    try:
+        resp = client.models.embed_content(
+            model=settings.embedding_model_gemini,
+            contents=texts,
+        )
+        return [list(e.values) for e in resp.embeddings]
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Gemini embed failed: %s", exc)
+        return None
