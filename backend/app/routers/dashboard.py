@@ -79,31 +79,39 @@ def company_dashboard(db: Session = Depends(get_db), user: User = Depends(get_cu
     if user.role not in (UserRole.MANAGEMENT_ADMIN, UserRole.SENIOR_MANAGER, UserRole.HR_RECRUITER):
         return {"error": "forbidden"}
 
-    total_emp = db.query(Employee).filter(Employee.status == "active").count()
+    today = date.today()
+
+    # Application counts grouped by status in ONE query — derive totals,
+    # shortlisted count and the funnel from it (was ~8 separate queries).
+    status_counts = dict(
+        db.query(Application.status, func.count(Application.id))
+        .group_by(Application.status)
+        .all()
+    )
+    total_apps = sum(status_counts.values())
+    shortlisted = status_counts.get(ApplicationStatus.SHORTLISTED, 0)
+    funnel = [
+        {"stage": st.value, "count": status_counts.get(st, 0)} for st in ApplicationStatus
+    ]
+
+    total_emp = db.query(func.count(Employee.id)).filter(Employee.status == "active").scalar()
+    open_jobs = db.query(func.count(JobPosting.id)).filter(JobPosting.status == "open").scalar()
+    pending_leaves = (
+        db.query(func.count(LeaveRequest.id)).filter(LeaveRequest.status == "pending").scalar()
+    )
+    present_today = (
+        db.query(func.count(AttendanceRecord.id))
+        .filter(
+            AttendanceRecord.date == today,
+            AttendanceRecord.status.in_(["present", "wfh"]),
+        )
+        .scalar()
+    )
     headcount_by_dept = (
         db.query(Department.name, func.count(Employee.id))
         .join(Employee, Employee.department_id == Department.id)
         .group_by(Department.name)
         .all()
-    )
-    open_jobs = db.query(JobPosting).filter(JobPosting.status == "open").count()
-    total_apps = db.query(Application).count()
-    shortlisted = (
-        db.query(Application)
-        .filter(Application.status == ApplicationStatus.SHORTLISTED)
-        .count()
-    )
-    pending_leaves = (
-        db.query(LeaveRequest).filter(LeaveRequest.status == "pending").count()
-    )
-    today = date.today()
-    present_today = (
-        db.query(AttendanceRecord)
-        .filter(
-            AttendanceRecord.date == today,
-            AttendanceRecord.status.in_(["present", "wfh"]),
-        )
-        .count()
     )
     return {
         "role": user.role.value,
@@ -118,7 +126,7 @@ def company_dashboard(db: Session = Depends(get_db), user: User = Depends(get_cu
         "headcount_by_department": [
             {"department": name, "count": count} for name, count in headcount_by_dept
         ],
-        "application_funnel": _application_funnel(db),
+        "application_funnel": funnel,
     }
 
 
@@ -127,11 +135,3 @@ def _attendance_trend(records) -> list[dict]:
     for r in sorted(records, key=lambda x: x.date):
         by_day[r.date.isoformat()] = r.hours_worked
     return [{"date": d, "hours": h} for d, h in by_day.items()]
-
-
-def _application_funnel(db: Session) -> list[dict]:
-    out = []
-    for st in ApplicationStatus:
-        count = db.query(Application).filter(Application.status == st).count()
-        out.append({"stage": st.value, "count": count})
-    return out
