@@ -128,3 +128,6 @@ hrms-ai/
 - [x] 4 tailored-access roles + personalized & company-wide dashboards
 - [x] ≥ 4 AI features · open-source/free tiers only · mobile responsive
 - [x] Documented code · README · architecture diagram · API docs
+
+## 📋 deployment link
+- https://ai-hrms-chi.vercel.app/login
